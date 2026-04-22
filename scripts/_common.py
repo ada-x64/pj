@@ -5,10 +5,9 @@ import dataclasses
 import json
 import os
 import pathlib
-import shutil
 import subprocess
 import sys
-from typing import Optional
+from typing import Literal, overload
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -65,15 +64,41 @@ def gh_token() -> str:
 # ---------------------------------------------------------------------------
 
 
+@overload
 def run(
     argv: list[str],
     *,
-    cwd: Optional[pathlib.Path] = None,
+    cwd: pathlib.Path | None = ...,
+    check: bool = ...,
+    capture: Literal[True],
+    extra_env: dict[str, str] | None = ...,
+) -> subprocess.CompletedProcess[str]: ...
+
+
+@overload
+def run(
+    argv: list[str],
+    *,
+    cwd: pathlib.Path | None = ...,
+    check: bool = ...,
+    capture: Literal[False] = ...,
+    extra_env: dict[str, str] | None = ...,
+) -> subprocess.CompletedProcess[str]: ...
+
+
+def run(
+    argv: list[str],
+    *,
+    cwd: pathlib.Path | None = None,
     check: bool = True,
     capture: bool = False,
-    extra_env: Optional[dict[str, str]] = None,
-) -> subprocess.CompletedProcess:
-    """Run *argv*, optionally capturing stdout, with merged env."""
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run *argv*, optionally capturing stdout, with merged env.
+
+    When ``capture=False``, ``result.stdout`` is ``None``. When ``capture=True``
+    it is a ``str`` (because ``text=True``).
+    """
     env = os.environ.copy()
     if extra_env:
         env.update(extra_env)
@@ -90,14 +115,14 @@ def run(
 
 def git(
     *args: str,
-    cwd: Optional[pathlib.Path] = None,
+    cwd: pathlib.Path | None = None,
     check: bool = True,
-) -> subprocess.CompletedProcess:
+) -> subprocess.CompletedProcess[str]:
     """Equivalent to: run(['git', *args], cwd=cwd, check=check, extra_env=GIT_SAFE_ENV)."""
     return run(["git", *args], cwd=cwd, check=check, extra_env=GIT_SAFE_ENV)
 
 
-def git_capture(*args: str, cwd: Optional[pathlib.Path] = None) -> str:
+def git_capture(*args: str, cwd: pathlib.Path | None = None) -> str:
     """git(...) with capture=True; returns stdout.strip()."""
     result = run(
         ["git", *args],
@@ -106,16 +131,27 @@ def git_capture(*args: str, cwd: Optional[pathlib.Path] = None) -> str:
         capture=True,
         extra_env=GIT_SAFE_ENV,
     )
+    assert result.stdout is not None  # capture=True ⇒ stdout is str
     return result.stdout.strip()
 
 
 def gh_default_branch(slug: str) -> str:
-    """gh repo view <slug> --json defaultBranchRef -q .defaultBranchRef.name"""
+    """gh repo view <slug> --json defaultBranchRef -q .defaultBranchRef.name.
+
+    Raises ``RuntimeError`` if gh fails or returns empty output. Callers that
+    want "log and continue" semantics (e.g. ``clean.py``) should catch this.
+    """
     result = run(
         ["gh", "repo", "view", slug, "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"],
         capture=True,
+        check=False,
     )
-    return result.stdout.strip()
+    branch = result.stdout.strip() if result.stdout else ""
+    if result.returncode != 0 or not branch:
+        raise RuntimeError(
+            f"could not determine default branch for {slug!r} (exit={result.returncode})"
+        )
+    return branch
 
 
 # ---------------------------------------------------------------------------
@@ -137,11 +173,11 @@ class Repo:
 
 @dataclasses.dataclass(frozen=True)
 class Worktree:
-    name: str                      # subdir name under .bare/worktrees/
-    branch: Optional[str]          # parsed from HEAD; None if detached/unparseable
-    wt_dir: pathlib.Path           # .bare/worktrees/<name>/
-    checkout: Optional[pathlib.Path]  # resolved working-tree path, or None if orphan
-    gitdir_raw: str                # raw contents of .bare/worktrees/<name>/gitdir
+    name: str                           # subdir name under .bare/worktrees/
+    branch: str | None                  # parsed from HEAD; None if detached/unparseable
+    wt_dir: pathlib.Path                # .bare/worktrees/<name>/
+    checkout: pathlib.Path | None       # resolved working-tree path, or None if orphan
+    gitdir_raw: str                     # raw contents of .bare/worktrees/<name>/gitdir
 
 
 def discover_worktrees(repo: Repo) -> list[Worktree]:
@@ -158,7 +194,7 @@ def discover_worktrees(repo: Repo) -> list[Worktree]:
 
         # Parse branch from HEAD
         head_file = wt_dir / "HEAD"
-        branch: Optional[str] = None
+        branch: str | None = None
         if head_file.exists():
             head_raw = head_file.read_text().strip()
             prefix = "ref: refs/heads/"
@@ -168,7 +204,7 @@ def discover_worktrees(repo: Repo) -> list[Worktree]:
         # Parse gitdir
         gitdir_file = wt_dir / "gitdir"
         gitdir_raw = ""
-        checkout: Optional[pathlib.Path] = None
+        checkout: pathlib.Path | None = None
 
         if gitdir_file.exists():
             gitdir_raw = gitdir_file.read_text().strip()
@@ -176,8 +212,9 @@ def discover_worktrees(repo: Repo) -> list[Worktree]:
 
             # Resolution rules matching clean-workspace.sh:128-131
             if gd.startswith("/"):
-                # absolute: strip trailing /.git
-                wt_path = pathlib.Path(gd[: -len("/.git")] if gd.endswith("/.git") else gd)
+                # absolute: drop the trailing `.git` component if present
+                p = pathlib.Path(gd)
+                wt_path = p.parent if p.name == ".git" else p
             else:
                 # relative: resolve from wt_dir
                 wt_path = (wt_dir / gd).resolve().parent
