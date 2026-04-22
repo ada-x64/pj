@@ -22,7 +22,7 @@ ws CMD *ARGS:
     scripts="{{ justfile_directory() }}/scripts"
     case "{{ CMD }}" in
         clean)
-            bash "$scripts/clean-workspace.sh" {{ ARGS }}
+            exec uv run --script "{{ SCRIPTS }}/clean.py" --project-root "{{ ROOT }}" {{ ARGS }}
             ;;
         install-git)
             bash "$scripts/install-git.sh" {{ ARGS }}
