@@ -9,12 +9,16 @@
 """Point basedpyright at a Python interpreter (accepts a venv dir or python binary).
 
 Invocation:
-  pj pyright [PATH]          # set configFilePath in .zed/settings.json
-  pj pyright --show          # print current configFilePath
+  pj venv [PATH]             # set basedpyright pythonPath in .zed/settings.json
+  pj venv --show             # print current pythonPath
   uv run --script .config/scripts/pyright.py [PATH|--show]
 
+Writes `lsp.basedpyright.settings.python.pythonPath`. If PATH is a directory,
+searches it (max-depth 6) for a single venv (pyvenv.cfg) and resolves the
+python binary inside it.
+
 Depends on: stdlib json, pathlib, os (no _common import needed).
-Replaces the 30-line bash+jq ``pyright`` recipe in the old justfile.
+Replaces the multi-line bash+jq ``venv`` recipe in the old justfile.
 """
 
 from __future__ import annotations
