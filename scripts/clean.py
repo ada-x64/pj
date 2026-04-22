@@ -6,7 +6,18 @@
 #   "rich>=13",
 # ]
 # ///
-"""Workspace cleanup — enforces primary-repo + default-branch invariants."""
+"""Workspace cleanup — enforces primary-repo + default-branch invariants.
+
+Invocation:
+  pj ws clean [--dry]                  # run all phases (dry: print actions only)
+  pj ws clean <phase> [--dry]          # run a single phase
+  uv run --script .config/scripts/clean.py [--dry] [PHASE]
+
+Phases (run in order by default): delete-non-primary, bootstrap-missing,
+normalize-bare-config, prune-merged-worktrees, ensure-default-worktree,
+rewrite-gitdirs-relative.  Depends on _common for Repo/Worktree helpers.
+Replaces the ~190-line clean-workspace.sh bash script (preserved in git history).
+"""
 
 from __future__ import annotations
 

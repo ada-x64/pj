@@ -1,4 +1,16 @@
-"""Shared stdlib-only helpers for `.config/scripts/*.py` uv scripts."""
+"""Shared stdlib-only helpers for `.config/scripts/*.py` uv scripts.
+
+This module is imported directly (no PEP 723 header) because it has no
+third-party dependencies.  Every uv script that needs env reads, git/gh
+subprocess wrappers, or the Repo/Worktree dataclasses should ``import _common``
+(scripts directory must be on sys.path, which ``uv run --script`` ensures for
+co-located files).
+
+Public API summary:
+  project_root(), primary_repos(), gh_token()   — env / path helpers
+  run(), git(), git_capture(), gh_default_branch() — subprocess wrappers
+  Repo, Worktree, discover_worktrees()           — bare-repo dataclasses
+"""
 from __future__ import annotations
 
 import dataclasses

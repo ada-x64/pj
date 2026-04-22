@@ -6,7 +6,16 @@
 #   "rich>=13",
 # ]
 # ///
-"""Point basedpyright at a Python interpreter (accepts a venv dir or python binary)."""
+"""Point basedpyright at a Python interpreter (accepts a venv dir or python binary).
+
+Invocation:
+  pj pyright [PATH]          # set configFilePath in .zed/settings.json
+  pj pyright --show          # print current configFilePath
+  uv run --script .config/scripts/pyright.py [PATH|--show]
+
+Depends on: stdlib json, pathlib, os (no _common import needed).
+Replaces the 30-line bash+jq ``pyright`` recipe in the old justfile.
+"""
 
 from __future__ import annotations
 

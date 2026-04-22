@@ -6,7 +6,16 @@
 #   "rich>=13",
 # ]
 # ///
-"""Workspace health-check — renders a Rich table of checks and exits 0 if all pass."""
+"""Workspace health-check — renders a Rich table of checks and exits 0 if all pass.
+
+Invocation:
+  pj ws doctor               # check all repos; exit 1 on any FAIL row
+  uv run --script .config/scripts/doctor.py
+
+Checks git version, env vars (PROJECT_ROOT, PRIMARY_REPOS, GH_TOKEN), gh auth,
+and per-repo bare-config invariants (repositoryformatversion, relativeWorktrees,
+no prunable worktrees).  Depends on _common for env helpers and git wrappers.
+"""
 
 from __future__ import annotations
 
