@@ -14,7 +14,6 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -23,6 +22,7 @@ app = typer.Typer(add_completion=False)
 console = Console(markup=False, soft_wrap=True)
 
 KEY_PATH = ("lsp", "basedpyright", "settings", "python", "pythonPath")
+MAX_VENV_DEPTH = 6  # max directory depth (relative to target) to search for pyvenv.cfg
 
 
 def _get_nested(d: dict, keys: tuple[str, ...]) -> str:
@@ -45,14 +45,15 @@ def _find_venv_python(target: Path) -> Path:
     """Given a directory, locate a single venv and return its python binary."""
     # If target itself is a venv, use it directly.
     if not (target / "pyvenv.cfg").exists():
-        # Search for pyvenv.cfg, sort by depth (shallow first)
+        # Search for pyvenv.cfg up to MAX_VENV_DEPTH directories deep.
+        # rglob yields a Path like <target>/<a>/<b>/pyvenv.cfg; the venv dir is
+        # the parent, so its depth (in parts) equals len(rel.parts) - 1.
+        # Therefore len(rel.parts) <= MAX_VENV_DEPTH + 1.
         found: list[Path] = []
         try:
             for cfg in target.rglob("pyvenv.cfg"):
-                # respect maxdepth 6 (relative parts count)
                 rel = cfg.relative_to(target)
-                if len(rel.parts) <= 7:  # pyvenv.cfg itself is 1 part, venv dir is part before
-                    # skip node_modules
+                if len(rel.parts) <= MAX_VENV_DEPTH + 1:
                     if "node_modules" not in rel.parts:
                         found.append(cfg.parent)
         except Exception:
@@ -81,15 +82,18 @@ def _find_venv_python(target: Path) -> Path:
 
 @app.command()
 def main(
-    path: Optional[str] = typer.Argument(None),
+    path: str | None = typer.Argument(None),
     show: bool = typer.Option(False, "--show"),
-    project_root: Optional[str] = typer.Option(None, "--project-root", hidden=True),
+    project_root: str | None = typer.Option(None, "--project-root", hidden=True),
 ) -> None:
     """Point basedpyright at a Python interpreter (venv dir or python binary)."""
     root = Path(project_root) if project_root else Path(os.environ.get("PROJECT_ROOT", ""))
     if not root or not root.exists():
-        # fallback
-        root = Path.cwd()
+        console.print(
+            "error: PROJECT_ROOT is not set and no --project-root was passed."
+            " Run via `pj`/`just` so the workspace root is propagated."
+        )
+        raise typer.Exit(2)
 
     settings_file = root / ".zed" / "settings.json"
 
@@ -98,7 +102,11 @@ def main(
         raise typer.Exit(1)
 
     settings_text = settings_file.read_text()
-    settings: dict = json.loads(settings_text)
+    try:
+        settings: dict = json.loads(settings_text)
+    except json.JSONDecodeError as exc:
+        console.print(f"error: {settings_file} is not valid JSON: {exc}")
+        raise typer.Exit(1) from exc
 
     # --show or no args
     if path is None or show:
