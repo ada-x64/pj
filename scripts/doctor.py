@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +28,8 @@ from rich.table import Table  # noqa: E402
 app = typer.Typer(add_completion=False)
 console = Console(soft_wrap=True)
 
+_VERSION_RE = re.compile(r"(\d+)\.(\d+)")
+
 # ---------------------------------------------------------------------------
 # Individual check functions — each returns (pass: bool, detail: str)
 # ---------------------------------------------------------------------------
@@ -37,13 +41,13 @@ def check_git_version() -> tuple[bool, str]:
         result = subprocess.run(
             ["git", "--version"], capture_output=True, text=True, check=True
         )
-        # "git version 2.50.1" → major=2, minor=50
-        parts = result.stdout.strip().split()
-        version_str = parts[2] if len(parts) >= 3 else parts[-1]
-        major_minor = version_str.split(".")[:2]
-        major, minor = int(major_minor[0]), int(major_minor[1])
+        # "git version 2.50.1", "git version 2.48.0-rc1", etc.
+        match = _VERSION_RE.search(result.stdout)
+        if not match:
+            return False, f"could not parse: {result.stdout.strip()!r}"
+        major, minor = int(match.group(1)), int(match.group(2))
         ok = (major, minor) >= (2, 48)
-        return ok, f"git {version_str}"
+        return ok, f"git {result.stdout.strip().split()[-1]}"
     except Exception as exc:
         return False, str(exc)
 
@@ -97,10 +101,13 @@ def check_repo_format_version(repo: _common.Repo) -> tuple[bool, str]:
         result = subprocess.run(
             ["git", "config", "-f", str(repo.bare / "config"), "core.repositoryformatversion"],
             capture_output=True, text=True,
+            env={**os.environ, **_common.GIT_SAFE_ENV},
         )
         val = result.stdout.strip()
+        if result.returncode != 0 and not val:
+            return False, "key not set"
         ok = val == "1"
-        detail = f"'{val}'" if ok else f"config returned '{val}' want '1'"
+        detail = f"'{val}'" if ok else f"got '{val}', want '1'"
         return ok, detail
     except Exception as exc:
         return False, str(exc)
@@ -112,10 +119,13 @@ def check_repo_relative_worktrees(repo: _common.Repo) -> tuple[bool, str]:
         result = subprocess.run(
             ["git", "config", "-f", str(repo.bare / "config"), "extensions.relativeWorktrees"],
             capture_output=True, text=True,
+            env={**os.environ, **_common.GIT_SAFE_ENV},
         )
         val = result.stdout.strip()
+        if result.returncode != 0 and not val:
+            return False, "key not set"
         ok = val == "true"
-        detail = f"'{val}'" if ok else f"config returned '{val}' want 'true'"
+        detail = f"'{val}'" if ok else f"got '{val}', want 'true'"
         return ok, detail
     except Exception as exc:
         return False, str(exc)
@@ -127,7 +137,7 @@ def check_repo_no_prunable(repo: _common.Repo) -> tuple[bool, str]:
         result = subprocess.run(
             ["git", "worktree", "list", "--porcelain"],
             capture_output=True, text=True, check=False,
-            env={**__import__("os").environ, **_common.GIT_SAFE_ENV},
+            env={**os.environ, **_common.GIT_SAFE_ENV},
             cwd=str(repo.bare),
         )
         prunable_count = result.stdout.count("prunable")
@@ -161,9 +171,7 @@ def main(
     project_root: str | None = typer.Option(None, "--project-root", hidden=True),
 ) -> None:
     """Workspace health-check."""
-    import os
-
-    # Resolve project root
+    # Resolve project root (CLI flag wins over env)
     if project_root:
         os.environ["PROJECT_ROOT"] = project_root
 
@@ -187,21 +195,25 @@ def main(
             all_pass = False
         add_row(table, check, ok, detail)
 
-    # --- Global checks ---
+    # --- Global checks (cache root + repos so per-repo loop reuses results) ---
     record("git >= 2.48", *check_git_version())
-    record("PROJECT_ROOT set", *check_project_root())
-    record("PRIMARY_REPOS set", *check_primary_repos())
+
+    pr_ok, pr_detail = check_project_root()
+    record("PROJECT_ROOT set", pr_ok, pr_detail)
+
+    repos_ok, repos_detail = check_primary_repos()
+    record("PRIMARY_REPOS set", repos_ok, repos_detail)
+
     record("GH_TOKEN set", *check_gh_token())
     record("gh authenticated", *check_gh_auth())
 
-    # --- Per-repo checks ---
-    try:
-        root = _common.project_root()
-        repo_names = _common.primary_repos()
-    except SystemExit:
-        # Can't do per-repo checks without root / repo list
+    # --- Per-repo checks (only if global env is sane) ---
+    if not (pr_ok and repos_ok):
         console.print(table)
         raise typer.Exit(0 if all_pass else 1)
+
+    root = _common.project_root()
+    repo_names = _common.primary_repos()
 
     for name in repo_names:
         base = root / name
