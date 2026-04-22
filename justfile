@@ -28,12 +28,7 @@ ws CMD *ARGS:
             bash "$scripts/install-git.sh" {{ ARGS }}
             ;;
         doctor)
-            bash "$scripts/install-git.sh" --check
-            : "${PRIMARY_REPOS:?PRIMARY_REPOS not set (source .envrc)}"
-            : "${GH_TOKEN:?GH_TOKEN not set (source .envrc)}"
-            command -v gh >/dev/null || { echo "error: gh CLI not found" >&2; exit 1; }
-            gh auth status >/dev/null 2>&1 || { echo "error: gh not authenticated" >&2; exit 1; }
-            echo "ok: git >= 2.48, PRIMARY_REPOS set, gh authenticated"
+            uv run --script "{{ SCRIPTS }}/doctor.py" --project-root "{{ ROOT }}" {{ ARGS }}
             ;;
         *)
             echo "error: unknown ws subcommand: {{ CMD }}" >&2
