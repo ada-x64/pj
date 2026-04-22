@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Annotated, Callable
@@ -60,13 +61,19 @@ def _resolve_project_root(project_root: str | None) -> None:
 
 
 def _delete_non_primary(dry: bool) -> None:
-    """Phase 0: remove top-level dirs not in PRIMARY_REPOS."""
+    """Phase 0: remove top-level dirs not in PRIMARY_REPOS.
+
+    Mirrors the bash glob `"$ROOT"/*/` which (without `dotglob`) skips
+    hidden directories. We must NOT touch `.config`, `.agents`, etc.
+    """
     console.print("=== Phase 0: prune non-primary top-level dirs ===")
     root = _common.project_root()
     keep = set(_common.primary_repos())
     for d in sorted(root.iterdir()):
-        if not d.is_dir():
+        if not d.is_dir() or d.is_symlink():
             continue
+        if d.name.startswith("."):
+            continue  # match bash glob behavior — never touch dotfiles
         if d.name in keep:
             continue
         console.print(f"  not primary: {d.name}")
@@ -150,12 +157,19 @@ def _normalize_bare_config(dry: bool) -> None:
                 "-C", str(bare), "symbolic-ref", "HEAD", f"refs/heads/{default}",
             ),
         )
+
+        # Fetch may legitimately fail (network down, auth lapsed); don't abort
+        # the whole phase — log and move on to the next repo.
+        def _fetch(bare=bare, name=name) -> None:
+            try:
+                _common.git("-C", str(bare), "fetch", "--all", "--prune", "--quiet")
+            except subprocess.CalledProcessError as exc:
+                console.print(f"  [yellow]warning:[/] fetch failed for {name}: {exc}")
+
         maybe(
             dry,
             f"git -C {bare} fetch --all --prune --quiet",
-            lambda bare=bare: _common.git(
-                "-C", str(bare), "fetch", "--all", "--prune", "--quiet",
-            ),
+            _fetch,
         )
 
 
@@ -187,6 +201,11 @@ def _prune_merged_worktrees(dry: bool) -> None:
                 console.print(f"  keep [{wt.name}] {wt.branch} (default)")
                 continue
 
+            # Detached HEAD: cannot resolve "merged into default"; keep conservatively.
+            if wt.branch is None:
+                console.print(f"  keep [{wt.name}] (detached HEAD — cannot resolve merge state)")
+                continue
+
             # Orphan registration (no local checkout)
             if wt.checkout is None:
                 console.print(f"  orphan reg [{wt.name}] {wt.branch} -> drop")
@@ -196,7 +215,7 @@ def _prune_merged_worktrees(dry: bool) -> None:
             # Merged into origin/default -> delete
             result = _common.run(
                 ["git", "-C", str(bare), "merge-base", "--is-ancestor",
-                 wt.branch or "", remote_default],
+                 wt.branch, remote_default],
                 check=False,
                 extra_env=_common.GIT_SAFE_ENV,
             )
