@@ -15,7 +15,7 @@ _default:
 venv *ARGS:
     uv run --script {{ SCRIPTS }}/pyright.py --project-root {{ ROOT }} {{ ARGS }}
 
-# Workspace operations. Subcommands: `clean [--dry]`, `install-git [--check]`, `doctor`.
+# Workspace operations. Subcommands: `clean [--dry]`, `install-git [--check]`, `doctor`, `wt <add|switch|rm|ls|status>`.
 ws CMD *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -30,9 +30,12 @@ ws CMD *ARGS:
         doctor)
             uv run --script "{{ SCRIPTS }}/doctor.py" --project-root "{{ ROOT }}" {{ ARGS }}
             ;;
+        wt)
+            exec bash "$scripts/wt.sh" {{ ARGS }}
+            ;;
         *)
             echo "error: unknown ws subcommand: {{ CMD }}" >&2
-            echo "available: clean, install-git, doctor" >&2
+            echo "available: clean, install-git, doctor, wt" >&2
             exit 2
             ;;
     esac
