@@ -7,7 +7,7 @@ subprocess wrappers, or the Repo/Worktree dataclasses should ``import _common``
 co-located files).
 
 Public API summary:
-  project_root(), primary_repos(), gh_token()   — env / path helpers
+  project_root(), primary_repos(), downstream_repos(), gh_token()   — env / path helpers
   run(), git(), git_capture(), gh_default_branch() — subprocess wrappers
   Repo, Worktree, discover_worktrees()           — bare-repo dataclasses
 """
@@ -57,6 +57,19 @@ def primary_repos() -> list[str]:
             "error: PRIMARY_REPOS not set — run `direnv allow` in the workspace root,"
             " or set PRIMARY_REPOS manually."
         )
+    return val.split()
+
+
+def downstream_repos() -> list[str]:
+    """$DOWNSTREAM_REPOS split on whitespace. Returns [] if unset.
+
+    Semantically distinct from PRIMARY_REPOS: these are additional git repos
+    (e.g. infra/tooling checkouts) that should be protected from cleanup but
+    are not part of the workspace's primary crate/package set.
+    """
+    val = os.environ.get("DOWNSTREAM_REPOS")
+    if not val:
+        return []
     return val.split()
 
 

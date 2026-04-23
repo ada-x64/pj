@@ -9,11 +9,19 @@
 """Workspace cleanup — enforces primary-repo + default-branch invariants.
 
 Invocation:
-  pj ws clean [--dry]                  # run all phases (dry: print actions only)
-  pj ws clean <phase> [--dry]          # run a single phase
-  uv run --script .config/scripts/clean.py [--dry] [PHASE]
+  pj ws clean                          # dry-run by default (preview only)
+  pj ws clean --apply                  # actually make changes
+  pj ws clean <phase> [--apply]        # run a single phase
+  uv run --script .config/scripts/clean.py [--apply] [PHASE]
 
-Phases (run in order by default): delete-non-primary, bootstrap-missing,
+Safety:
+  - Dry-run is the default. Pass --apply (or -y) to execute.
+  - Phase 0 ('prune-stray-repos') only deletes top-level dirs that are
+    themselves git repos (have .bare/ or .git) AND are absent from both
+    PRIMARY_REPOS and DOWNSTREAM_REPOS. Plain directories (build outputs,
+    tooling checkouts not registered as repos, etc.) are never touched.
+
+Phases (run in order by default): prune-stray-repos, bootstrap-missing,
 normalize-bare-config, prune-merged-worktrees, ensure-default-worktree,
 rewrite-gitdirs-relative.  Depends on _common for Repo/Worktree helpers.
 Replaces the ~190-line clean-workspace.sh bash script (preserved in git history).
@@ -72,22 +80,37 @@ def _resolve_project_root(project_root: str | None) -> None:
 
 
 def _delete_non_primary(dry: bool) -> None:
-    """Phase 0: remove top-level dirs not in PRIMARY_REPOS.
+    """Phase 0: prune top-level dirs that are stray git repos.
 
-    Mirrors the bash glob `"$ROOT"/*/` which (without `dotglob`) skips
-    hidden directories. We must NOT touch `.config`, `.agents`, etc.
+    A directory is eligible for deletion only if ALL of the following hold:
+      * it is a real directory (not a symlink) at the workspace root,
+      * its name does NOT start with a dot (dotfiles/dot-dirs are always kept),
+      * it contains a `.bare/` or `.git` (file or dir) — i.e. it is itself
+        a git repository,
+      * its name is NOT in PRIMARY_REPOS, and
+      * its name is NOT in DOWNSTREAM_REPOS.
+
+    Plain directories with no git metadata (build outputs, tooling checkouts
+    not registered as repos, scratch dirs, etc.) are never touched. This is
+    deliberately conservative: prior behavior (`rm -rf` anything not primary)
+    obliterated entire metarepos when misconfigured.
     """
-    console.print("=== Phase 0: prune non-primary top-level dirs ===")
+    console.print("=== Phase 0: prune stray git repos ===")
     root = _common.project_root()
-    keep = set(_common.primary_repos())
+    keep = set(_common.primary_repos()) | set(_common.downstream_repos())
     for d in sorted(root.iterdir()):
         if not d.is_dir() or d.is_symlink():
             continue
         if d.name.startswith("."):
-            continue  # match bash glob behavior — never touch dotfiles
+            continue  # never touch dotfiles/dot-dirs
         if d.name in keep:
             continue
-        console.print(f"  not primary: {d.name}")
+        # Only prune if this dir is itself a git repo.
+        is_git_repo = (d / ".bare").is_dir() or (d / ".git").exists()
+        if not is_git_repo:
+            console.print(f"  skip (not a git repo): {d.name}")
+            continue
+        console.print(f"  stray git repo: {d.name}")
         maybe(dry, f"rm -rf {d}", lambda d=d: shutil.rmtree(d))
 
 
@@ -339,7 +362,7 @@ def _rewrite_gitdirs_relative(dry: bool) -> None:
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    dry: Annotated[bool, typer.Option("--dry", "-n", help="Preview without making changes")] = False,
+    dry: Annotated[bool, typer.Option("--dry/--apply", "-n/-y", help="Dry-run by default; pass --apply/-y to actually make changes")] = True,
     project_root: str | None = typer.Option(None, "--project-root", hidden=True),
 ) -> None:
     """Workspace cleanup — run all phases in order, or invoke a subcommand."""
@@ -353,24 +376,35 @@ def main(
         _rewrite_gitdirs_relative(dry)
         console.print()
         if dry:
-            console.print("=== done (dry — no changes made; re-run without --dry to apply) ===")
+            console.print("=== done (dry-run — no changes made; re-run with --apply to execute) ===")
         else:
             console.print("=== done ===")
 
 
-@app.command("delete-non-primary")
-def delete_non_primary(
-    dry: Annotated[bool, typer.Option("--dry", "-n", help="Preview without making changes")] = False,
+@app.command("prune-stray-repos")
+def prune_stray_repos(
+    dry: Annotated[bool, typer.Option("--dry/--apply", "-n/-y", help="Dry-run by default; pass --apply/-y to actually make changes")] = True,
     project_root: str | None = typer.Option(None, "--project-root", hidden=True),
 ) -> None:
-    """Remove top-level dirs not in PRIMARY_REPOS."""
+    """Remove top-level git-repo dirs not in PRIMARY_REPOS ∪ DOWNSTREAM_REPOS."""
+    _resolve_project_root(project_root)
+    _delete_non_primary(dry)
+
+
+# Back-compat alias; deprecated in favor of `prune-stray-repos`.
+@app.command("delete-non-primary", hidden=True)
+def delete_non_primary(
+    dry: Annotated[bool, typer.Option("--dry/--apply", "-n/-y", help="Dry-run by default; pass --apply/-y to actually make changes")] = True,
+    project_root: str | None = typer.Option(None, "--project-root", hidden=True),
+) -> None:
+    """Deprecated alias for `prune-stray-repos`."""
     _resolve_project_root(project_root)
     _delete_non_primary(dry)
 
 
 @app.command("bootstrap-missing")
 def bootstrap_missing(
-    dry: Annotated[bool, typer.Option("--dry", "-n", help="Preview without making changes")] = False,
+    dry: Annotated[bool, typer.Option("--dry/--apply", "-n/-y", help="Dry-run by default; pass --apply/-y to actually make changes")] = True,
     project_root: str | None = typer.Option(None, "--project-root", hidden=True),
 ) -> None:
     """Clone bare repos that are absent."""
@@ -380,7 +414,7 @@ def bootstrap_missing(
 
 @app.command("normalize-bare-config")
 def normalize_bare_config(
-    dry: Annotated[bool, typer.Option("--dry", "-n", help="Preview without making changes")] = False,
+    dry: Annotated[bool, typer.Option("--dry/--apply", "-n/-y", help="Dry-run by default; pass --apply/-y to actually make changes")] = True,
     project_root: str | None = typer.Option(None, "--project-root", hidden=True),
 ) -> None:
     """Set repositoryformatversion=1, relativeWorktrees=true, HEAD, and fetch."""
@@ -390,7 +424,7 @@ def normalize_bare_config(
 
 @app.command("prune-merged-worktrees")
 def prune_merged_worktrees(
-    dry: Annotated[bool, typer.Option("--dry", "-n", help="Preview without making changes")] = False,
+    dry: Annotated[bool, typer.Option("--dry/--apply", "-n/-y", help="Dry-run by default; pass --apply/-y to actually make changes")] = True,
     project_root: str | None = typer.Option(None, "--project-root", hidden=True),
 ) -> None:
     """Remove merged and orphan worktrees."""
@@ -400,7 +434,7 @@ def prune_merged_worktrees(
 
 @app.command("ensure-default-worktree")
 def ensure_default_worktree(
-    dry: Annotated[bool, typer.Option("--dry", "-n", help="Preview without making changes")] = False,
+    dry: Annotated[bool, typer.Option("--dry/--apply", "-n/-y", help="Dry-run by default; pass --apply/-y to actually make changes")] = True,
     project_root: str | None = typer.Option(None, "--project-root", hidden=True),
 ) -> None:
     """Create default-branch worktree if absent."""
@@ -410,7 +444,7 @@ def ensure_default_worktree(
 
 @app.command("rewrite-gitdirs-relative")
 def rewrite_gitdirs_relative(
-    dry: Annotated[bool, typer.Option("--dry", "-n", help="Preview without making changes")] = False,
+    dry: Annotated[bool, typer.Option("--dry/--apply", "-n/-y", help="Dry-run by default; pass --apply/-y to actually make changes")] = True,
     project_root: str | None = typer.Option(None, "--project-root", hidden=True),
 ) -> None:
     """Rewrite both sides of every worktree's gitdir to relative paths."""
