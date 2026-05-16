@@ -1,5 +1,0 @@
-#!/usr/bin/env bash
-# pj — project-level just. Runs the repo's justfile from any cwd inside the project.
-set -euo pipefail
-: "${PROJECT_ROOT:?PROJECT_ROOT not set — run \`direnv allow\` in the project root}"
-exec just --justfile "$PROJECT_ROOT/.config/justfile" --working-directory "$PWD" "$@"
