@@ -61,7 +61,11 @@ function sync_repo() {
     echo "ℹ️ syncing config files"
     run ln -sf -T "${CONFIG_DIR}/AGENTS.md" "${dir}/AGENTS.md"
     run ln -sf -T "${CONFIG_DIR}/justfile" "${dir}/justfile"
-    run bash -c "cp \"${CONFIG_DIR}/pyrightconfig.json\" \"${dir}/pyrightconfig.json\" || true"
+    if [ ! -e "${dir}/pyrightconfig.json" ]; then
+        run bash -c "cp \"${CONFIG_DIR}/pyrightconfig.json\" \"${dir}/pyrightconfig.json\" || true"
+    else
+        echo "✅ pyrightconfig.json exists"
+    fi
 
     local default_branch=$(gh repo view ${repo} --json defaultBranchRef --jq '.defaultBranchRef.name')
     run bash -c "echo \"${default_branch}\" > ${dir}/.default-branch"

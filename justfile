@@ -31,7 +31,7 @@ distclean:
 # Change where 'active' points to.
 target dir:
     #!/bin/bash
-    dir={{dir}}
+    dir={{ dir }}
     if [ "${dir}" == "default" ]; then
         if [ ! -f .default-branch ]; then
             just _get-default
@@ -44,12 +44,15 @@ target dir:
     fi
     ln -s "${dir}" -T active -f
     ls active -l
+    if [ -e "target-hook.sh" ]; then
+        bash target-hook.sh
+    fi
 
 # Create a new worktree.
 add name:
     #!/bin/bash
-    if [[ ! {{name}} =~ ^fix|feat|doc|tests ]]; then
-        echo "Invalid branch name: {{name}}"
+    if [[ ! {{ name }} =~ ^fix|feat|doc|tests ]]; then
+        echo "Invalid branch name: {{ name }}"
         echo "Valid branch names are: fix/*, feat/*, doc/*, tests/*"
         exit 1
     fi
@@ -58,7 +61,7 @@ add name:
         exit 1
     fi
     git fetch
-    git worktree add {{name}} -b {{name}} "origin/$(cat .default-branch)"
+    git worktree add {{ name }} -b {{ name }} "origin/$(cat .default-branch)"
 
 # Get the default branch name from GitHub and persist it to disk.
 _get-default:
@@ -69,9 +72,17 @@ _refresh-downstreams:
     #!/bin/bash
 
 # All needed repos NOT included in consumer-repos.json
-
 # Refresh downstream consumers and create any missing metarepo directories.
 # Will fixup any existing repos.
+
 # Dry-run by default. Pass -x/--execute to run, --clobber to overwrite dirty worktrees.
 sync *args:
-    ~/repos/nanvix/.config/sync.sh {{args}}
+    ~/repos/nanvix/.config/sync.sh {{ args }}
+
+# Prune merged worktrees across all metarepos.
+
+# Dry-run by default. Pass -x/--execute to actually delete.
+prune *args:
+    ~/repos/nanvix/.config/prune.sh {{ args }}
+
+import? "local.just"
