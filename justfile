@@ -67,22 +67,36 @@ add name:
 _get-default:
     gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' | tee .default-branch
 
-# Get the latest consumer repos from nanvix/workflows
+# Refresh consumer-repos.json from nanvix/workflows.
+# Set NANVIX_SKIP_REFRESH=1 to bypass (offline use).
 _refresh-downstreams:
     #!/bin/bash
+    set -euo pipefail
+    if [ "${NANVIX_SKIP_REFRESH:-0}" = "1" ]; then
+        echo "ℹ️  NANVIX_SKIP_REFRESH=1; using existing consumer-repos.json"
+        exit 0
+    fi
+    echo "ℹ️  refreshing consumer-repos.json from nanvix/workflows"
+    url=$(gh api /repos/nanvix/workflows/contents/consumer-repos.json --jq .download_url)
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    curl -fsSL "$url" -o "$tmp"
+    jq empty "$tmp"
+    mv "$tmp" "$HOME/repos/nanvix/.config/consumer-repos.json"
+    trap - EXIT
 
 # All needed repos NOT included in consumer-repos.json
 # Refresh downstream consumers and create any missing metarepo directories.
 # Will fixup any existing repos.
 
 # Dry-run by default. Pass -x/--execute to run, --clobber to overwrite dirty worktrees.
-sync *args:
+sync *args: _refresh-downstreams
     ~/repos/nanvix/.config/sync.sh {{ args }}
 
 # Prune merged worktrees across all metarepos.
 
 # Dry-run by default. Pass -x/--execute to actually delete.
-prune *args:
+prune *args: _refresh-downstreams
     ~/repos/nanvix/.config/prune.sh {{ args }}
 
 import? "local.just"

@@ -25,12 +25,13 @@ run() {
     fi
 }
 
-# Build the list of repos to walk (same set sync.sh manages)
-if [ -f "${CONFIG_DIR}/consumer-repos.json" ]; then
-    mapfile -t ALL_REPOS < <(jq -r '.[]' "${CONFIG_DIR}/consumer-repos.json")
-else
-    ALL_REPOS=()
+# Build the list of repos to walk (same set sync.sh manages).
+# Refresh is handled by `just _refresh-downstreams` (run via `just prune`).
+if [ ! -f "${CONFIG_DIR}/consumer-repos.json" ]; then
+    echo "consumer-repos.json missing; run 'just _refresh-downstreams' or 'just prune' first" >&2
+    exit 1
 fi
+mapfile -t ALL_REPOS < <(jq -r '.[]' "${CONFIG_DIR}/consumer-repos.json")
 ALL_REPOS+=("${PRIMARY_REPOS[@]}")
 
 prune_repo() {

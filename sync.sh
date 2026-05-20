@@ -16,9 +16,13 @@ for arg in "$@"; do
     esac
 done
 
-# Update repo list
-gh api /repos/nanvix/workflows/contents/consumer-repos.json --jq .download_url | xargs curl -L > "$CONFIG_DIR/consumer-repos.json"
-mapfile -t ALL_REPOS < <(jq -r '.[]' consumer-repos.json)
+# Load repo list. Refresh is handled by `just _refresh-downstreams` (run via
+# `just sync`); run directly only if you've refreshed it yourself.
+if [ ! -f "$CONFIG_DIR/consumer-repos.json" ]; then
+    echo "consumer-repos.json missing; run 'just _refresh-downstreams' or 'just sync' first" >&2
+    exit 1
+fi
+mapfile -t ALL_REPOS < <(jq -r '.[]' "$CONFIG_DIR/consumer-repos.json")
 ALL_REPOS+=("${PRIMARY_REPOS[@]}")
 
 # Dry run helper
